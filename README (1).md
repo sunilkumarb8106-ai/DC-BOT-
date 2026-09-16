@@ -1,6 +1,6 @@
 # Discord Bot Starter
 
-A five-bot Discord voice system using Node.js and discord.js. Every configured bot responds to the same voice commands and can be controlled from the web dashboard.
+A five-bot Discord voice system using Node.js and discord.js. Every configured bot is controlled from the web dashboard.
 
 ## Setup
 
@@ -20,19 +20,11 @@ A five-bot Discord voice system using Node.js and discord.js. Every configured b
    npm start
    ```
 
-## Voice commands
+## Web controls
 
-The user and bot must be in the same server. Use these commands in a text channel:
+Open the dashboard at the service URL and log in with `WEB_ADMIN_KEY`. Select a server and voice channel, then use the web controls to join all bots, stop all audio, leave all bots, or play an uploaded audio file on all bots.
 
-| Command | Action |
-| --- | --- |
-| `!j` | Join your voice channel |
-| `!d` | Disconnect from voice |
-| `!s` | Stop all bot voice players |
-
-Each command is handled once and broadcast concurrently to every online bot. One reply reports how many bots completed the action.
-
-In the Developer Portal, enable the **Message Content Intent** under **Bot → Privileged Gateway Intents**. The bot also needs the `View Channel`, `Connect`, and `Speak` permissions in the voice channel.
+The bot needs the `View Channel`, `Connect`, and `Speak` permissions in the voice channel. All controls are available only in the web dashboard. Volume can be adjusted from `0%` to `1000%`; levels above `100%` may distort the audio.
 
 ## Deploy on Render
 
@@ -40,24 +32,19 @@ In the Developer Portal, enable the **Message Content Intent** under **Bot → P
 
 GitHub stores the project files; it does not run the Discord bot or Node.js dashboard. Use the button above to create the public web service on Render. Render will give you a web URL such as `https://your-service.onrender.com`.
 
-Create a **Web Service** from this repository. Set **Root Directory** to blank (the repository root), **Build Command** to `npm install`, and **Start Command** to `npm start`. Do not use `node src/index.js` as the Render start command. Do not set the root directory to `src`; `src` is a folder containing the implementation, not the project root. Render will use Node `22.x` from `package.json`, which is required for the native Opus encoder. Add all five `DISCORD_TOKEN_1` through `DISCORD_TOKEN_5` and `WEB_ADMIN_KEY` as Render environment variables. Client IDs are not required. Add `GUILD_ID` only when it is the real numeric ID of your Discord server; otherwise leave it empty.
+Create a **Web Service** from this repository. Set **Root Directory** to blank (the repository root), **Build Command** to `npm install`, and **Start Command** to `npm start`. Do not use `node src/index.js` as the Render start command. Do not set the root directory to `src`; `src` is a folder containing the implementation, not the project root. Add all five `DISCORD_TOKEN_1` through `DISCORD_TOKEN_5` and `WEB_ADMIN_KEY` as Render environment variables. Client IDs are not required. Add `GUILD_ID` only when it is the real numeric ID of your Discord server; otherwise leave it empty. The project uses the JavaScript Opus fallback, so native Opus build tools are not required.
 
-The dashboard is available at the deployed service URL. Open it and log in with the exact `WEB_ADMIN_KEY` from Render. The page shows the status of all five bot slots before enabling controls. If a bot says `missing-token`, add its matching `DISCORD_TOKEN_1` through `DISCORD_TOKEN_5` environment variable in Render. Paste a Discord voice channel ID and click **Join All Bots**. Every online bot will join that channel. Upload an audio file, then click **Play in Discord** beside it to send that audio to every bot in the channel. The browser player previews audio locally; **Stop All** stops Discord playback and **Disconnect All** ends every active voice session. The bot accounts must already be invited to the channel's server and have `Connect`, `Speak`, and `View Channel` permissions.
+The dashboard is available at the deployed service URL. Open it and log in with the exact `WEB_ADMIN_KEY` from Render. The page shows the status of all five bot slots before enabling controls. If a bot says `missing-token`, add its matching `DISCORD_TOKEN_1` through `DISCORD_TOKEN_5` environment variable in Render. Choose a server and voice channel, then click **Join all bots**. Every online bot will join that channel. Upload an audio file, then click **Play on all bots** beside it to send that audio to every bot in the channel. **Stop all audio** stops Discord playback and **Leave all bots** ends every active voice session. The bot accounts must already be invited to the channel's server and have `Connect`, `Speak`, and `View Channel` permissions.
 
 The included `render.yaml` contains the same Web Service configuration for Blueprint deploys.
 
 ## Create and invite the bots
 
-Create one application per bot at [discord.com/developers/applications](https://discord.com/developers/applications). Open **Bot**, add a bot user, and use **Reset Token** to generate a new token. Under **OAuth2 > URL Generator**, select the `bot` and `applications.commands` scopes, then grant `View Channel`, `Connect`, `Speak`, and `Send Messages`. Open the generated URL and invite each bot to the same server.
+Create one application per bot at [discord.com/developers/applications](https://discord.com/developers/applications). Open **Bot**, add a bot user, and use **Reset Token** to generate a new token. Under **OAuth2 > URL Generator**, select the `bot` scope, then grant `View Channel`, `Connect`, and `Speak`. Open the generated URL and invite each bot to the same server.
 
-Enable **Message Content Intent** for every bot under **Bot > Privileged Gateway Intents**. The old tokens in the workspace were exposed and must not be reused; revoke them before starting these bots.
+The old tokens in the workspace were exposed and must not be reused; revoke them before starting these bots.
 
 ## Invite the bots
 
-In the Developer Portal, create an OAuth2 invite URL with these scopes:
-
-- `bot`
-- `applications.commands`
-
-The bot only needs the `Send Messages` permission for the included commands.
+In the Developer Portal, create an OAuth2 invite URL with the `bot` scope and the `View Channel`, `Connect`, and `Speak` permissions.
 

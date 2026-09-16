@@ -45,39 +45,7 @@ function configuredBots() {
 }
 
 const sessions = new Map();
-const desiredChannels = new Map();
-const reconnectTimers = new Map();
 const bots = [];
-
-function desiredKey(botNumber, guildId) {
-  return `${botNumber}:${guildId}`;
-}
-
-function scheduleKeepAlive(bot, guild, channelId) {
-  const key = desiredKey(bot.number, guild.id);
-  if (reconnectTimers.has(key) || !desiredChannels.has(key)) return;
-  const timer = setTimeout(async () => {
-    reconnectTimers.delete(key);
-    if (!desiredChannels.has(key) || bot.status !== 'online') return;
-    try {
-      const channel = await bot.client.channels.fetch(channelId);
-      await connectToChannel(bot, guild, channel);
-      addLog('info', `Bot ${bot.number} keep-alive reconnected to ${channelId}.`);
-    } catch (error) {
-      addLog('error', `Bot ${bot.number} keep-alive reconnect failed: ${error.message}.`);
-      scheduleKeepAlive(bot, guild, channelId);
-    }
-  }, 5_000);
-  reconnectTimers.set(key, timer);
-}
-
-function clearDesiredChannel(botNumber, guildId) {
-  const key = desiredKey(botNumber, guildId);
-  desiredChannels.delete(key);
-  const timer = reconnectTimers.get(key);
-  if (timer) clearTimeout(timer);
-  reconnectTimers.delete(key);
-}
 
 function getAudioPath(filename) {
   if (!filename || path.basename(filename) !== filename) return null;
@@ -148,14 +116,8 @@ function stopSessionAudio(session) {
   }
 }
 
-async function connectToMemberChannel(bot, member) {
-  if (!member.voice.channel) throw new Error('Join a voice channel first.');
-  return connectToChannel(bot, member.guild, member.voice.channel);
-}
-
 async function connectToChannel(bot, guild, channel, attempt = 0) {
   if (!channel.isVoiceBased()) throw new Error(`Channel ${channel.id} is not a voice channel.`);
-  desiredChannels.set(desiredKey(bot.number, guild.id), { channelId: channel.id });
   const botMember = guild.members.me || await guild.members.fetchMe();
   const permission = channel.permissionsFor(botMember);
   const missingPermissions = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
@@ -202,15 +164,11 @@ async function connectToChannel(bot, guild, channel, attempt = 0) {
         if (sessions.get(key) !== session || session.connection.state.status !== VoiceConnectionStatus.Disconnected) return;
         sessions.delete(key);
         safelyDestroy(session.connection);
-        const desired = desiredChannels.get(key);
-        if (desired) scheduleKeepAlive(bot, guild, desired.channelId);
       }, 2_000);
     }
     if (newState.status === VoiceConnectionStatus.Destroyed && sessions.get(key) === session) {
       sessions.delete(key);
       addLog('info', `Bot ${bot.number} voice session ended.`);
-      const desired = desiredChannels.get(key);
-      if (desired) scheduleKeepAlive(bot, guild, desired.channelId);
     }
   });
   addLog('info', `Bot ${bot.number} is joining voice channel ${channel.id}.`);
@@ -225,7 +183,6 @@ async function connectToChannel(bot, guild, channel, attempt = 0) {
     safelyDestroy(connection);
     sessions.delete(key);
     if (attempt >= 2) {
-      scheduleKeepAlive(bot, guild, channel.id);
       throw new Error(error.code === 'ABORT_ERR'
         ? 'Discord voice UDP handshake timed out after 3 fresh attempts. Check Render outbound UDP support and the bot voice permissions.'
         : error.message);
@@ -324,12 +281,9 @@ async function runWebControl(action, guildIdToControl, channelIdToControl, filen
           ...[...sessions.keys()]
             .filter((key) => key.startsWith(`${bot.number}:`))
             .map((key) => key.split(':')[1]),
-          ...[...desiredChannels.keys()]
-            .filter((key) => key.startsWith(`${bot.number}:`))
-            .map((key) => key.split(':')[1]),
         ]);
         const completed = [...guildIds]
-          .map((guildId) => { clearDesiredChannel(bot.number, guildId); return disconnect(bot.number, guildId); })
+          .map((guildId) => disconnect(bot.number, guildId))
           .some(Boolean);
         return { bot: bot.number, completed };
       }
@@ -341,7 +295,6 @@ async function runWebControl(action, guildIdToControl, channelIdToControl, filen
       }
       if (!guild) throw new Error(`Cannot access channel ${channelIdToControl}. Invite Bot ${bot.number} to the channel's server.`);
       if (action === 'disconnect') {
-        clearDesiredChannel(bot.number, guild.id);
         return { bot: bot.number, completed: disconnect(bot.number, guild.id) };
       }
       const session = sessions.get(`${bot.number}:${guild.id}`);
@@ -353,7 +306,6 @@ async function runWebControl(action, guildIdToControl, channelIdToControl, filen
         || (activeSession && guild.channels.cache.get(activeSession[1].channelId))
         || guild.channels.cache.get(channelIdToControl);
       if (!channel) throw new Error('Choose a voice channel or join a voice channel first.');
-      desiredChannels.set(desiredKey(bot.number, guild.id), { channelId: channel.id });
       const connected = await connectToChannel(bot, guild, channel);
       if (action === 'play') await playInDiscord(bot, connected, filename, loop, volume);
       return { bot: bot.number, completed: true, state: sessions.get(`${bot.number}:${guild.id}`)?.connection.state.status };
@@ -383,37 +335,6 @@ function disconnect(botNumber, guildIdToDisconnect) {
   return true;
 }
 
-async function runForAllBots(command, message) {
-  const activeBots = bots.filter((bot) => bot.status === 'online');
-  if (!activeBots.length) throw new Error('No bots are online yet.');
-
-  const results = await Promise.allSettled(activeBots.map(async (bot) => {
-    if (command === '!j') {
-      await connectToMemberChannel(bot, message.member);
-      return `Bot ${bot.number} joined`;
-    }
-
-    if (command === '!d') {
-      clearDesiredChannel(bot.number, message.guild.id);
-      return disconnect(bot.number, message.guild.id) ? `Bot ${bot.number} disconnected` : `Bot ${bot.number} was not connected`;
-    }
-
-    if (command === '!s') {
-      const session = sessions.get(`${bot.number}:${message.guild.id}`);
-      session?.player.stop();
-      return session ? `Bot ${bot.number} stopped` : `Bot ${bot.number} was not playing`;
-    }
-
-    return null;
-  }));
-
-  const failed = results.filter((result) => result.status === 'rejected');
-  if (failed.length) {
-    console.error('Some bot commands failed:', failed.map((result) => result.reason));
-  }
-  return `${results.length - failed.length}/${results.length} bots completed ${command}.${failed.length ? ` ${failed.length} failed; check bot permissions.` : ''}`;
-}
-
 function attachBot(bot) {
   if (!bot.token || bot.token.startsWith('replace-with-')) {
     bots.push({ ...bot, client: null, status: 'missing-token', statusMessage: 'Add this bot token in Render.' });
@@ -421,7 +342,7 @@ function attachBot(bot) {
     return;
   }
   addLog('info', `Bot ${bot.number} token configured. Attempting Discord login.`);
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
   const botState = { ...bot, client, status: bot.status };
   bots.push(botState);
 
@@ -435,21 +356,6 @@ function attachBot(bot) {
   client.on('voiceStateUpdate', (oldState, newState) => {
     if (newState.id !== client.user?.id) return;
     addLog('info', `Bot ${bot.number} Discord voice state: ${oldState.channelId || 'none'} -> ${newState.channelId || 'none'}.`);
-  });
-
-  client.on('messageCreate', async (message) => {
-    if (message.author.bot || !message.guild || !message.content.startsWith('!')) return;
-    const command = message.content.trim().toLowerCase();
-    const controller = bots.find((candidate) => candidate.status === 'online');
-    if (controller && botState.number !== controller.number) return;
-    try {
-      if (['!j', '!s', '!d'].includes(command)) {
-        await message.reply(await runForAllBots(command, message));
-      }
-    } catch (error) {
-      console.error(`Bot ${bot.number} command failed:`, error);
-      await message.reply(`I could not complete that command: ${error.message}`);
-    }
   });
 
   client.login(bot.token).catch((error) => {
@@ -504,7 +410,7 @@ app.post('/api/control', requireAdmin, async (request, response) => {
     return response.status(400).json({ error: 'Choose a voice channel.' });
   }
   if (action === 'play' && !getAudioPath(filename)) return response.status(400).json({ error: 'Choose a valid uploaded audio file.' });
-  const safeVolume = Number.isFinite(Number(volume)) ? Math.max(0, Math.min(200, Number(volume))) : 100;
+  const safeVolume = Number.isFinite(Number(volume)) ? Math.max(0, Math.min(1000, Number(volume))) : 100;
   try {
     response.json(await runWebControl(action, targetGuildId, targetChannelId, filename, loop === true, safeVolume));
   } catch (error) {
